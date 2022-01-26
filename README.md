@@ -241,48 +241,100 @@ Accedere ad openshift usando la vista *developer*.
 
 accedere all'applicazione usando l'opportuno link disponibile nella vista *Topology* del progetto.
 
-## Packaging and running the application
+### PASSO 8 - Autenticazione tramite OIDC 
 
-The application can be packaged using:
+In questa parte aggiungiamo alcune funzionalita' base per gestire l'identità digitale. Il server di riferimento che gestisce l'identita' e i meccanismi di verifica dell'identita' e' esterno alla demo, in questa demo il server OIDC è erogato da un Red Hat SSO (Keycloak project).
+
+Torniamo in **dev mode** e da un'altra finestra del terminale aggiungiamo le estensioni necessarie a gestire il protocollo OIDC usando il comando: 
+
 ```shell script
-./mvnw package
-```
-It produces the `quarkus-run.jar` file in the `target/quarkus-app/` directory.
-Be aware that it’s not an _über-jar_ as the dependencies are copied into the `target/quarkus-app/lib/` directory.
-
-The application is now runnable using `java -jar target/quarkus-app/quarkus-run.jar`.
-
-If you want to build an _über-jar_, execute the following command:
-```shell script
-./mvnw package -Dquarkus.package.type=uber-jar
+./mvnw quarkus:add-extension -Dextensions="oidc,keycloak-authorization"
 ```
 
-The application, packaged as an _über-jar_, is now runnable using `java -jar target/*-runner.jar`.
+nella finestra dove è in esecuzione l'ambiente in **dev mode** noterete dai log a console che dopo aver aggiunto le estensioni vengono generati una serie di errori. E' giusto che cio' accada in quanto l'estensione il runtime va a controllare il server di riferimento gia' allo startup. Occorre quindi aggiungere subito i parametri di configurazione OIDC nel file *src/main/resources/application.properties*.
 
-## Creating a native executable
+Aggiungere al file i seguenti valori:
 
-You can create a native executable using: 
 ```shell script
-./mvnw package -Pnative
+# OIDC Configuration
+quarkus.oidc.auth-server-url=https://<your-oidc-host>/auth/realms/<realm-name>
+quarkus.oidc.client-id=<client-id>
+quarkus.oidc.credentials.secret=<your-secret>
+#quarkus.oidc.application-type=web-app
+quarkus.http.auth.permission.authenticated.paths=/info
+quarkus.http.auth.permission.authenticated.policy=authenticated
 ```
 
-Or, if you don't have GraalVM installed, you can run the native executable build in a container using: 
+dopo aver inserito le informazioni di cui sopra, ovviamente sostituendo opportunamente i valori corretti, provando a lanciare dal secondo terminale una semplice get tipo:
+
 ```shell script
-./mvnw package -Pnative -Dquarkus.native.container-build=true
+> curl http://localhost:8080/
 ```
 
-You can then execute your native executable with: `./target/qdemo-1.0.0-SNAPSHOT-runner`
+vedrete dalla *dev console* che il runtime riparte questa volta senza errori.
 
-If you want to learn more about building native executables, please consult https://quarkus.io/guides/maven-tooling.
+A questo punto aggiungiamo un servizio rest che faccia uso dei meccanismi OIDC, ovvero che sia protetto e allo stesso tempo che permetta di recuperare alcune informazioni dal token di sicurezza JWT. Aggiungiamo le seguenti classi:
 
-## Related Guides
+**Info.java**
 
-- RESTEasy JAX-RS ([guide](https://quarkus.io/guides/rest-json)): REST endpoint framework implementing JAX-RS and more
+```shell script
+package org.acme;
 
-## Provided Code
+public class Info {
+    public String username;
+    public String name;
+}
+```
 
-### RESTEasy JAX-RS
+**UserResource.java**
 
-Easily start your RESTful Web Services
+```shell script
+package org.acme;
 
-[Related guide section...](https://quarkus.io/guides/getting-started#the-jax-rs-resources)
+import javax.inject.Inject;
+import javax.ws.rs.Consumes;
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+import javax.ws.rs.core.MediaType;
+
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
+@Path("/info")
+@Consumes(MediaType.APPLICATION_JSON)
+@Produces(MediaType.APPLICATION_JSON)
+public class UserResource {
+
+    @Inject
+    JsonWebToken accessToken;
+    
+    @GET
+    public Info get() {
+        Info info = new Info();
+        StringBuffer buffer = new StringBuffer();
+        buffer.append(accessToken.getClaim("given_name").toString()).append(" ").append(accessToken.getClaim("family_name").toString());
+        info.name = buffer.toString();
+        info.username = accessToken.getName();
+        return info;
+    }
+
+}
+```
+
+Ci sono 2 cose su cui porre l'attenzione, l'annotation *@Path* che corrisponde al path protetto nelle *application.properties* e l'*idToken* iniettato tramite CDI.
+
+per provare il funzionamento occorre eseguire alcuni comandi tramite riga di comando, nella solita finestra alternativa alla *dev console* eseguiamo quindi i seguenti comandi (sono richiesti i package *curl* e *jq*):
+
+```shell script
+> export TKN=$(\
+>    curl --insecure -X POST http(s)://<your-oidc-host>/auth/realms/<realm-name>/protocol/openid-connect/token \
+>    --user <clientId>:<secret> \
+>    -H 'content-type: application/x-www-form-urlencoded' \
+>    -d 'username=<userid>&password=<password>&grant_type=password' | jq --raw-output '.access_token' \
+> )
+
+> curl http://localhost:8080/info -H "Authorization: Bearer "$TKN
+
+```
+
+se tutto funziona dovrebbe essere visibile un oggetto json contenente la userId ed il nome completo dell'utente specificato. 
