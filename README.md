@@ -203,7 +203,7 @@ eseguire la build dell'immagine.
 eseguire l'applicazione tramite podman 
 
 ```shell script
-> podman run --rm --name demoapp -d -p 8080:8080 -e MONGOCONNSTRING=mongodb://192.168.1.100:27017/demo qdemo
+> podman run --rm --name demoapp -d -p 8080:8080 -e MONGOCONNSTRING=mongodb://<mongodb-host>:27017/demo qdemo
 ```
 
 quando l'applicazione viene eseguita dentro un container l'indirizzo *localhost* non è più valido occorre quindi fornire l'apposita variabile di riferimento, nell'esempio occorre sostituire l'indirizzo con quello ip della macchina dove è in esecuzione il database MongoDB.
